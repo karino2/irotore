@@ -1,5 +1,6 @@
 <html>
 <head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
 <title>色トレ！ Color pickup training</title>
 <script src="http://ajax.googleapis.com/ajax/libs/jquery/1.11.1/jquery.min.js"></script>
 <script src="http://ajax.googleapis.com/ajax/libs/jqueryui/1.11.0/jquery-ui.min.js"></script>
@@ -602,7 +603,7 @@ function gotoShowAnswerState() {
 		$('#goButton').val("Next");
 	} else {
 		$('#goButton').val("Done");
-		// $('#goButton').prop('disabled', true);
+		$('#goButton').prop('disabled', true);
 	}
 
 	var selectedResult = {rad: g_canvObj.currentRad, wheelX: g_canvObj.wheelX, wheelY: g_canvObj.wheelY, time: 0 };
@@ -630,6 +631,11 @@ function gotoShowAnswerState() {
 		// 	return {score: radDiff*100+gradDist, radDiff: radDiff, gradDist: gradDist};
 		/* showScore("Score is: " + score.score + "<br>radDiff: " + score.radDiff + "<br>gradDist=" + score.gradDist); */
 		g_results.push(score);
+		
+		if(!g_gameState.hasNext()) {
+			outputResults();
+		}
+
 	
 		showScore("radDiff: " + score.radDiff + "<br>gradDist=" + score.gradDist + "<br>差分度数: " + score.degreeDiff);
 	}, 200);
@@ -645,33 +651,37 @@ function setupNewScenarioImage() {
 		}, 100);
 }
 
+function outputResults() {
+	var buf = [];
+	for(var i = 0; i < g_results.length; i++) {
+		// 	return {score: radDiff*100+gradDist, radDiff: radDiff, gradDist: gradDist};
+		var res =g_results[i];
+		buf.push("img");
+		buf.push(i);
+		buf.push(": \n");
+		buf.push("角度差分: ");
+		buf.push(res.degreeDiff);
+		buf.push("\n");
+		buf.push("SV差分: ");
+		buf.push(res.gradDist);
+		buf.push("\n");
+		buf.push("\n");
+	}
+			
+	$('#debugTextArea').val(buf.join(""));
+}
+
 function goClicked() {
 	if(g_gameState.showAnswer) {
 		 if(g_gameState.hasNext()) {
+			$('#goButton').val("Go");
 			g_gameState.scenarioIndex++;
 			g_gameState.showAnswer =false;
 			g_gameState.answerSelected =false;
 			setDefaultAnswerColor();
 			setupNewScenarioImage();
 		} else {
-			var buf = [];
-			for(var i = 0; i < g_results.length; i++) {
-				// 	return {score: radDiff*100+gradDist, radDiff: radDiff, gradDist: gradDist};
-				var res =g_results[i];
-				buf.push("img");
-				buf.push(i);
-				buf.push(": \n");
-				buf.push("角度差分: ");
-				buf.push(res.degreeDiff);
-				buf.push("\n");
-				buf.push("SV差分: ");
-				buf.push(res.gradDist);
-				buf.push("\n");
-				buf.push("\n");
-			}
-			
-			alert(buf.join(""));
-			$('#goButton').prop('disabled', true);
+			// $('#goButton').prop('disabled', true);
 		}
 	} else {
 		gotoShowAnswerState();
@@ -716,5 +726,6 @@ border-style: solid ; border-width: 1px;
 	<div id="targetRect"  style="position:absolute; left: 0px; top: 0px; width:20px; height:20px; border-style: solid ; border-width: 6px; border-color:red;"></div>
 	</div>
 </div>
+<textarea id="debugTextArea" rows="16" cols="50"></textarea>
 </body>
 </html>
