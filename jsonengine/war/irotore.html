@@ -1,0 +1,720 @@
+<html>
+<head>
+<title>iro tore: Color pickup training</title>
+<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.11.1/jquery.min.js"></script>
+<script src="http://ajax.googleapis.com/ajax/libs/jqueryui/1.11.0/jquery-ui.min.js"></script>
+<script language="JavaScript">
+
+function fillEllipse(ctx, centerX, centerY, radiusX, radiusY, fillColor)
+{
+	ctx.beginPath();
+	ctx.fillStyle = fillColor;
+	ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, 2 * Math.PI);
+	ctx.fill();
+}
+
+var g_wheelH =30;
+// var g_currentRad = 0;
+var g_currentRad = 1.5;
+
+function rgbToBytes(r, g, b, outBytes) {
+		outBytes[0] = r;
+		outBytes[1] = g;
+		outBytes[2] =b;
+}
+
+function HSVToRGB(hue, sat, val, outBytes)
+{
+	var i = Math.floor(hue / 60) % 6;
+	var f = hue/60 - i;
+	
+	val *= 255;
+	var p = Math.floor((1-sat)*val);
+	var q = Math.floor((1-(sat*f))*val);
+	var t = Math.floor((1-(1 - f)*sat)*val);
+	
+	switch(i) {
+	case 0:
+		rgbToBytes(val, t, p, outBytes);
+		return;
+	case 1:
+		rgbToBytes(q, val, p, outBytes);
+		return;
+	case 2:
+		rgbToBytes(p, val, t, outBytes);
+		return;
+	case 3:
+		rgbToBytes(p, q, val, outBytes);
+		return;
+	case 4:
+		rgbToBytes(t, p, val, outBytes);
+		return;
+	case 5:
+		rgbToBytes(val, p, q, outBytes);
+		return;
+	}
+}
+
+function RGBToHue(r, g, b)
+{
+	var max = Math.max(r, g, b);
+	var min = Math.min(r, g, b);
+	var delta = max - min;
+	if(delta == 0) {
+		return 0;
+	}
+	
+	var hue =0;
+	if(r == max) {
+		hue = (g-b)/delta;
+	} else if (g == max) {
+		hue = 2 + (b-r)/delta;
+	} else { /* else if (b == max)  */
+		hue =4 + (r-g)/delta;
+	}
+	hue *= 60;
+	if(hue < 0){
+		hue += 360;
+	}
+	return hue;
+}
+
+
+function currentHue() {
+	var rad = g_currentRad;	
+	if (rad < 0) rad += Math.PI*2;
+	var rgbBytes = [0, 0,  0];
+	HSVToRGB(360*rad / (Math.PI*2), 1, 1, rgbBytes);
+	return rgbBytes;
+}
+
+function blend(destBytes, srcBytes, alpha, outBytes) {
+	var alpha2 = 255 - alpha;
+	outBytes[0] = Math.floor((srcBytes[0]*alpha2+destBytes[0]*alpha)/255);
+	outBytes[1] = Math.floor((srcBytes[1]*alpha2+destBytes[1]*alpha)/255);
+	outBytes[2] = Math.floor((srcBytes[2]*alpha2+destBytes[2]*alpha)/255);
+}
+
+function nearestPos(pixels, targetColors, width, height) {
+	var len = 999999999;
+	var bytes = [0, 0, 0];
+	var resPos = [0, 0];
+	for(var j = 0; j < height; j++)
+	{
+		for(var i = 0;i < width; i++)
+		{
+			var pos = (i+j*width)*4;
+			getPixels(pixels, pos, bytes);
+			var dif = (bytes[0]-targetColors[0])*(bytes[0]-targetColors[0])+(bytes[1]-targetColors[1])*(bytes[1]-targetColors[1])+(bytes[2]-targetColors[2])*(bytes[2]-targetColors[2]);
+			if(dif < len)
+			{
+				resPos[0] = i;
+				resPos[1] = j;
+				len =dif;
+			}
+		
+		}
+	}
+	return resPos;
+}
+
+function setPixels(pixels, pos, rgbs) {
+	pixels[pos] = rgbs[0];
+	pixels[pos+1] = rgbs[1];
+	pixels[pos+2] = rgbs[2];
+	pixels[pos+3] = 0xff;
+	
+}
+
+function getPixels(pixels, pos, outRgbs) {
+	outRgbs[0] =pixels[pos];
+	outRgbs[1] =pixels[pos+1];
+	outRgbs[2] =pixels[pos+2];	
+}
+
+
+function CanvasObj(canvas, jcanvas, cursorHue, cursorSV) {
+	this.canvas = canvas;
+	this.jcanvas =jcanvas;
+	this.cursorHue =cursorHue;
+	this.cursorSV =cursorSV;
+	this.ctx = canvas.getContext('2d');
+	this.wheelH = g_wheelH;
+	this.currentRad = g_currentRad;
+	this.offset = function() { return this.jcanvas.offset(); };
+	this.width = canvas.width;
+	this.height = canvas.height;
+	this.hueChanging =false;
+	this.svChanging = false;
+	this.cursorSize = 10;
+	this.getWheelRad = function(rx, ry) {
+		var x = rx - this.height/2;
+		var y = ry - this.height/2;
+		return Math.atan2(y, x);
+	};
+	this.getGradW =function () {
+		return Math.floor((this.height-this.wheelH*2)/Math.sqrt(2));
+	};
+	this.wheelX =this.getGradW()-1;
+	this.wheelY = this.getGradW()-1;
+	this.gradOffX = Math.floor((this.height/2 - this.getGradW()/2));
+	this.gradOffY = Math.floor((this.height/2 - this.getGradW()/2));
+
+
+	this.insideCanvas =function(pageX, pageY) {
+		if(this.offset().left > pageX || this.offset().top > pageY) {
+			return false;
+		}
+	
+		if(this.offset().left + this.width < pageX || this.offset().top +this.height < pageY) {
+			return false;
+		}
+		return true;
+	};
+	this.currentHue = function() {
+		var rad = this.currentRad;	
+		if (rad < 0) rad += Math.PI*2;
+		var rgbBytes = [0, 0,  0];
+		HSVToRGB(360*rad / (Math.PI*2), 1, 1, rgbBytes);
+		return rgbBytes;
+	};
+	this.currentColor = function() {
+		var offX = Math.floor((this.height/2 - this.getGradW()/2));
+		var offY = Math.floor((this.height/2 - this.getGradW()/2));
+		
+	   var imageData = this.ctx.getImageData(offX+this.wheelX, offY+this.wheelY, 1, 1);
+	   var pixels = imageData.data;
+	   
+		var pos = ((offY+this.wheelY)*this.width+offX+this.wheelX)*4;
+		var rgbs = [0, 0, 0];
+		getPixels(pixels, 0, rgbs);
+		return rgbs;	   
+	};
+	this.updateCursor =function() {
+		var gradW = this.getGradW();
+		var svx = this.height/2-gradW/2;
+		var svy =this.height/2 - gradW/2;
+	
+	
+		var gw = this.getGradW()/2;
+		var gh = gw;
+		var px = (this.height/2 - this.wheelH/2)*Math.cos(this.currentRad);
+		var py = (this.height/2 - this.wheelH/2)*Math.sin(this.currentRad);
+		var left = this.offset().left+svx+gw+px-this.cursorSize/2;
+		var top =this.offset().top + svy + gh+py;
+	   this.cursorHue.offset({left: left, top: top});
+	   this.cursorHue.css('display', 'block');
+	   
+	   left =this.offset().left+svx+this.wheelX-this.cursorSize/2;
+	   top = this.offset().top +svy+this.wheelY-this.cursorSize/2;
+	   this.cursorSV.offset({left: left, top: top});
+	   this.cursorSV.css('display', 'block');
+	};
+	this.updateWheelXY = function(rx, ry){
+		var ix = rx - (this.height/2 -this.getGradW()/2);
+		var iy = ry - (this.height/2 - this.getGradW()/2);
+
+		if (ix < 0) ix = 0;
+		if (iy < 0) iy = 0;
+		if (ix >= this.getGradW()) ix = this.getGradW() - 1;
+		if (iy >= this.getGradW()) iy = this.getGradW() - 1;
+		this.wheelX = Math.floor(ix);
+		this.wheelY = Math.floor(iy);
+	};
+	this.drawColorWheel =function() {
+		var ctx = this.ctx;
+		var width =this.width;
+		var height =this.height;
+		ctx.beginPath();
+		ctx.fillStyle = 'rgba(0, 0, 0, 255)';
+		ctx.fillRect(0, 0, width, height);
+		
+		var cX =width/2;
+		var cY = height/2;
+		
+		fillEllipse(ctx, cX, cY, width/2, height/2, "rgba(255, 255, 255, 255)");
+		fillEllipse(ctx, cX, cY, width/2 - this.wheelH, height/2 - this.wheelH, "rgba(0, 0, 0, 255)");
+		
+		var rgbBytes = [0, 0, 0];
+	
+	
+	   var imageData = ctx.getImageData(0, 0, width, height);
+	   var pixels = imageData.data;
+		
+	   for(var x = 0; x < width; x++) {
+		   for(var y=0; y< height; y++) {
+			   var pos = ((y*width)+x)*4;
+			   if(pixels[pos] == 0 && pixels[pos+1] == 0 && pixels[pos+2] == 0 && pixels[pos+3] == 255)
+			   {
+				   setPixels(pixels, pos, [0xE6, 0xE6, 0xE6]);
+				   continue;
+			   }
+			   
+			   var rad =Math.atan2(y - cY, x - cX);
+			   if(rad < 0) rad += Math.PI*2;
+			   var hue = 360*rad/(Math.PI*2);
+			   HSVToRGB(360*rad/(Math.PI*2), 1, 1, rgbBytes);
+			   setPixels(pixels, pos, rgbBytes);
+		   }
+		}
+		ctx.putImageData(imageData, 0, 0);
+		
+	};
+	
+
+	this.drawSV =function() {
+			var ctx =this.ctx;
+			var width =this.width;
+			var height =this.height;
+			var hueRGB = this.currentHue();
+			
+			var gladW = this.getGradW();
+			var gladH =gladW;
+		   var imageData = ctx.getImageData(0, 0, width, height);
+		   var pixels = imageData.data;
+		   
+		   var offX = Math.floor((height/2 - gladW/2));
+		   var offY = Math.floor((height/2 - gladH/2));
+		   var rgbs = [0, 0, 0];
+		   
+		   // top
+		   for(var i =0; i <gladW; i++){
+			   var a = 255*i/gladW;
+			   blend(hueRGB, [0xff, 0xff, 0xff], a, rgbs);
+			   var pos =(offY*width+(i+offX))*4;
+			   setPixels(pixels, pos, rgbs);
+		   }
+		   
+		   //left
+		   for(var i = 0; i <gladH; i++) {
+			   var a =255*i / gladH;
+			   blend([0, 0, 0], [0xff, 0xff, 0xff], a, rgbs);
+			   
+			   var pos = ((offY+i)*width+offX)*4;
+			   setPixels(pixels, pos, rgbs);
+		   }
+		   
+		   // right
+		   var rightMost = gladW-1;
+		   for(var i = 0; i <gladH; i++) {
+			   var a =255*i / gladH;
+			   blend([0, 0, 0], hueRGB, a, rgbs);
+			   
+			   var pos = ((offY+i)*width+(offX+rightMost))*4;
+			   setPixels(pixels, pos, rgbs);
+		   }
+		   
+		   
+		   // all other
+		   var rgbs2 = [0, 0, 0];
+		   var rgbs3 = [0, 0, 0];
+		   for(var j = 1; j < gladH; j++) {
+			   var pos = ((offY+j)*width+(offX+gladW-1))*4;
+			   getPixels(pixels, pos, rgbs2);
+			   pos =((offY+j)*width+(offX+0))*4;
+			   getPixels(pixels, pos, rgbs);
+	   
+		   for(var i = 1; i <gladW-1; i++) {
+			   a = 255*i/gladH;
+			   blend(rgbs2, rgbs, a, rgbs3);
+		   
+			   var pos2 =((offY+j)*width+(offX+i))*4;
+			   setPixels(pixels, pos2, rgbs3);
+			}
+		}
+		ctx.putImageData(imageData, 0, 0);
+	
+	};
+
+	
+	
+	// please overwrite.
+	this.onColorUpdate = function(rgbBytes) {};
+}
+
+// x, y are all relative to offset.
+function insideHue(x, y, canvObj) {
+	var cx = canvObj.width/2;
+	var cy =canvObj.height/2;
+	
+	x -= cx;
+	y -= cy;
+	var dist =x*x +y*y;
+	if (dist != 0) dist = Math.sqrt(dist);
+	
+	var max = canvObj.height /2 +canvObj.wheelH/3;
+	var min = canvObj.height/2 -canvObj.wheelH;
+
+	if ((min <= dist) && (dist <= max)) return true;
+    return false;
+}
+
+function insideSV(x, y, canvObj) {
+	var gradW = canvObj.getGradW();
+	var gradH =gradW;
+	x -= canvObj.height/2 - gradW/2;
+	y -= canvObj.height/2 - gradH/2;
+	if (x < 0) return false;
+	if (y < 0) return false;
+	if (x >= gradW) return false;
+	if (y >= gradH) return false;
+	return true;
+}
+
+
+function OnMouseDown(pageX, pageY, canvObj) {
+   if(!canvObj.insideCanvas(pageX, pageY)){
+	   return false;
+	}
+	
+	if(g_gameState.showAnswer) return false;
+	
+	var offset = canvObj.offset();
+	var rx = pageX - offset.left;
+	var ry = pageY - offset.top;
+	
+	if(insideHue(rx, ry, canvObj)) {
+		canvObj.hueChanging =true;
+		canvObj.currentRad = canvObj.getWheelRad(rx, ry);
+		canvObj.drawSV();
+		canvObj.updateCursor();
+		canvObj.onColorUpdate(canvObj.currentColor());
+		return true;
+	}
+
+	if(insideSV(rx, ry, canvObj)) {
+		canvObj.svChanging =true;
+		canvObj.updateWheelXY(rx, ry);
+		canvObj.updateCursor();
+		canvObj.onColorUpdate(canvObj.currentColor());
+		return true;
+	}
+	
+	return false;
+}
+
+function OnMouseMove(pageX, pageY, canvObj) {
+	if(g_gameState.showAnswer) return false;
+	
+	var offset = canvObj.offset();
+	var rx = pageX - offset.left;
+	var ry = pageY - offset.top;
+
+	if(canvObj.hueChanging) {
+		canvObj.currentRad = canvObj.getWheelRad(rx, ry);
+		canvObj.drawSV();
+		canvObj.updateCursor();
+		canvObj.onColorUpdate(canvObj.currentColor());
+		return true;
+	}
+	
+	if(canvObj.svChanging) {
+		canvObj.updateWheelXY(rx, ry);
+		canvObj.updateCursor();
+		canvObj.onColorUpdate(canvObj.currentColor());
+		return true;
+	}
+	
+	return false;
+	
+}
+
+function OnMouseUp(pageX, pageY, canvObj) {
+	if(g_gameState.showAnswer) return false;
+	
+	canvObj.svChanging =false;
+	canvObj.hueChanging =false;
+}
+
+
+
+function setDefaultAnswerColor() {
+   div =document.getElementById('answerColorDiv');
+   div.style.backgroundColor = 'rgb(230,230,230)'; // 'rgb(e6,e6,e6)';
+}
+
+function init(){
+   var canvas = document.getElementById('colorCanvas');
+   g_canvObj = new CanvasObj(canvas, $('#colorCanvas'), $('#colorCursorHue'), $('#colorCursorSV'));
+   
+   var ctx = canvas.getContext('2d');
+   var width =  canvas.width;
+   var height = canvas.height;
+   
+   g_canvObj.drawColorWheel();
+   g_canvObj.drawSV();
+   g_canvObj.updateCursor();
+   g_canvObj.onColorUpdate =function(rgbs){
+	   var div =document.getElementById('selectedColorDiv');
+	   div.style.backgroundColor = 'rgb(' + rgbs[0] +',' + rgbs[1]+','+rgbs[2]+')';
+   };
+   
+   // g_canvObj.onColorUpdate(g_canvObj.currentColor());
+   g_canvObj.onColorUpdate([0, 0, 0]);
+
+   setDefaultAnswerColor();
+   
+   
+   document.body.addEventListener("mousedown", function(e){
+	   return OnMouseDown(e.pageX, e.pageY, g_canvObj);
+   }, true);
+
+   document.body.addEventListener("mousemove", function(e){
+	   return OnMouseMove(e.pageX, e.pageY, g_canvObj);
+   }, true);
+
+   document.body.addEventListener("mouseup", function(e){
+	   return OnMouseUp(e.pageX, e.pageY, g_canvObj);
+   }, true);
+   
+   
+ 	
+	$('#answerColorDiv').click(function(){
+		OnAnswerColorDivClicked();
+	});
+
+	$('#selectedColorDiv').click(function(){
+		OnSelectedColorDivClicked();
+	});
+  
+   // at onload, canvas offset is not yet fixed.
+   setTimeout(function() { 
+	g_canvObj.updateCursor();
+	setupNewScenarioImage();
+	 }, 100);
+ }
+
+var g_targetRectWidth = 20+6*2; 
+ 
+function setTargetPos(rx, ry) {
+	 var img = $("#targetImg");
+	 var div = $("#targetRect");
+	 var offset = img.offset();
+	 div.offset({left: offset.left+rx-g_targetRectWidth/2, top: offset.top+ry-g_targetRectWidth/2});
+}
+ 
+var g_scenarios = [
+ {url: "./3621651i.jpeg", width: 620, height: 430, targetX: 300, targetY: 180},
+ {url: "./3224034i.jpeg", width: 620, height: 425, targetX: 100, targetY: 300},
+ {url: "./3578501i.jpeg", width: 620, height: 457, targetX: 357, targetY: 421},
+];
+
+var g_results = [];
+
+
+var g_gameState = {
+scenarioIndex: 0,
+showAnswer: false,
+answerSelected: false,
+hasNext: function() { return this.scenarioIndex+1 <g_scenarios.length },
+};
+
+function getCurrentScenario() {
+	return g_scenarios[g_gameState.scenarioIndex];
+}
+
+function OnAnswerColorDivClicked() {
+	if(!g_gameState.showAnswer) return;
+	if(g_gameState.answerSelected) return;
+	g_gameState.answerSelected = true;
+	
+	selectAnswerColorDiv();
+}
+
+function OnSelectedColorDivClicked() {
+	if(!g_gameState.showAnswer) return;
+	if(!g_gameState.answerSelected) return;
+	g_gameState.answerSelected = false;
+
+	selectSelectedColorDiv();
+}
+
+function applyColorToPicker(rgbs) {
+	var hue = RGBToHue(rgbs[0], rgbs[1], rgbs[2]);
+	g_canvObj.currentRad = hue*2*Math.PI/360;
+	g_canvObj.drawSV();
+	
+	var gradW = g_canvObj.getGradW();
+	var gradH = gradW;
+	var imageData = g_canvObj.ctx.getImageData(g_canvObj.gradOffX, g_canvObj.gradOffY, gradW, gradH);
+	var pixels = imageData.data;
+	var pos = nearestPos(pixels, rgbs, gradW, gradH);
+	g_canvObj.wheelX = pos[0];
+	g_canvObj.wheelY = pos[1];
+	
+	g_canvObj.updateCursor();
+}
+
+function selectAnswerColorDiv() {
+	$('#answerColorDiv').addClass('focusedRect');
+	$('#answerColorDiv').removeClass('unfocusedRect');
+	$('#selectedColorDiv').addClass('unfocusedRect');
+	$('#selectedColorDiv').removeClass('focusedRect');
+	
+	applyColorToPicker(parseBGColor($('#answerColorDiv').css('backgroundColor')));
+}
+
+function selectSelectedColorDivInternal() {
+	$('#selectedColorDiv').addClass('focusedRect');
+	$('#selectedColorDiv').removeClass('unfocusedRect');
+	$('#answerColorDiv').addClass('unfocusedRect');
+	$('#answerColorDiv').removeClass('focusedRect');
+}
+
+function selectSelectedColorDiv() {
+	selectSelectedColorDivInternal();
+	applyColorToPicker(parseBGColor($('#selectedColorDiv').css('backgroundColor')));
+}
+
+function parseBGColor(str){
+	var beg = str.indexOf('(')+1;
+	var end = str.indexOf(')');
+	var strArrs = str.substring(beg, end).split(",");
+	var res = [];
+	for(var i = 0; i < strArrs.length; i++) {
+		res.push(parseInt(strArrs[i]));
+	}
+	return res;
+}
+
+function distance(x1, y1, x2, y2) {
+	return Math.sqrt((x2-x1)*(x2-x1)+(y2-y1)*(y2-y1));
+}
+
+// 	var selectedResult = {rad: g_canvObj.currentRad, wheelX: g_canvObj.wheelX, wheelY: g_canvObj.wheelY, time: 0 };
+function calcScore(selectedResult, answerResult) {
+	var radDiff = Math.abs(selectedResult.rad - answerResult.rad)*(g_canvObj.getGradW()*1.4/2 + 5); // almost R.
+	var gradDist = distance(selectedResult.wheelX, selectedResult.wheelY, answerResult.wheelX, answerResult.wheelY);
+	
+	var tmpRd = (selectedResult.rad - answerResult.rad);
+	var tmpRes =Math.abs(tmpRd);
+	if(Math.abs(tmpRd) > Math.PI) {
+		tmpRes = 2*Math.PI - Math.abs(tmpRd);
+	}
+	var tmpDegree =tmpRes*180/Math.PI;
+	console.debug("radDiff=" +  tmpRd + ", degree=" + tmpDegree);
+	return {score: radDiff*100+gradDist, radDiff: radDiff, gradDist: gradDist, degreeDiff: tmpDegree};
+}
+
+
+function gotoShowAnswerState() {
+	if(g_gameState.hasNext()) {
+		$('#goButton').val("Next");
+	} else {
+		$('#goButton').val("Done");
+		// $('#goButton').prop('disabled', true);
+	}
+
+	var selectedResult = {rad: g_canvObj.currentRad, wheelX: g_canvObj.wheelX, wheelY: g_canvObj.wheelY, time: 0 };
+
+	g_gameState.showAnswer = true;
+	var img = document.getElementById('targetImg');
+	 
+	var canvas = document.createElement('canvas');
+	canvas.width =img.width;
+	canvas.height =img.height;
+	var ctx = canvas.getContext('2d');
+	ctx.drawImage(img, 0, 0, img.width, img.height);
+	setTimeout(function(){
+		var cur = getCurrentScenario();
+		var pixels = ctx.getImageData(cur.targetX, cur.targetY, 1, 1).data;
+		var answerRgbs = [0, 0, 0];
+		getPixels(pixels, 0, answerRgbs);
+	
+		var div =document.getElementById('answerColorDiv');
+		div.style.backgroundColor = 'rgb(' + answerRgbs[0] +',' + answerRgbs[1]+','+answerRgbs[2]+')';
+		OnAnswerColorDivClicked();
+	
+		var answerResult = {rad: g_canvObj.currentRad, wheelX: g_canvObj.wheelX, wheelY: g_canvObj.wheelY, time: 0 };
+		var score = calcScore(selectedResult, answerResult);
+		// 	return {score: radDiff*100+gradDist, radDiff: radDiff, gradDist: gradDist};
+		/* showScore("Score is: " + score.score + "<br>radDiff: " + score.radDiff + "<br>gradDist=" + score.gradDist); */
+		g_results.push(score);
+	
+		showScore("radDiff: " + score.radDiff + "<br>gradDist=" + score.gradDist + "<br>差分度数: " + score.degreeDiff);
+	}, 200);
+}
+
+function setupNewScenarioImage() {
+	var cur = getCurrentScenario();
+	$('#targetImg').attr('src', cur.url);
+	$('#targetImg').attr('width', cur.width);
+	$('#targetImg').attr('height', cur.height);
+	setTimeout(function() {
+		setTargetPos(cur.targetX, cur.targetY);
+		}, 100);
+}
+
+function goClicked() {
+	if(g_gameState.showAnswer) {
+		 if(g_gameState.hasNext()) {
+			g_gameState.scenarioIndex++;
+			g_gameState.showAnswer =false;
+			g_gameState.answerSelected =false;
+			setDefaultAnswerColor();
+			setupNewScenarioImage();
+		} else {
+			var buf = [];
+			for(var i = 0; i < g_results.length; i++) {
+				// 	return {score: radDiff*100+gradDist, radDiff: radDiff, gradDist: gradDist};
+				var res =g_results[i];
+				buf.push("img");
+				buf.push(i);
+				buf.push(": \n");
+				buf.push("角度差分: ");
+				buf.push(res.degreeDiff);
+				buf.push("\n");
+				buf.push("SV差分: ");
+				buf.push(res.gradDist);
+				buf.push("\n");
+				buf.push("\n");
+			}
+			
+			alert(buf.join(""));
+			$('#goButton').prop('disabled', true);
+		}
+	} else {
+		gotoShowAnswerState();
+	}
+ }
+ 
+ function showScore(html) {
+	 $('#showScoreDiv').html(html);
+ }
+
+</script>
+<style>
+.focusedRect {
+border-style: solid ; border-width: 3px; border-color:red;
+}
+.unfocusedRect {
+border-style: solid ; border-width: 1px;
+}
+</style>
+</head>
+
+<body onload="init()">
+<a href="about.html">画像の出典</a><br>
+<div id="colorCursorHue" style="display:none; width:10px; height:10px; background-image: url('./color_cursor.png');"></div>
+<div id="colorCursorSV" style="display:none; width:10px; height:10px; background-image: url('./color_cursor.png');"></div>
+<div style="float:left">
+  <div style="overflow:hidden">
+    <div style="float:left;">selected: </div>
+	<div class="focusedRect" id="selectedColorDiv" style="float:left; width:50px;height:50px; background-color:#FF0000"></div>
+	  <input id="goButton" type="button" value="GO" onclick="goClicked()"></input>
+    <div style="float:left;"> answer: </div>
+	<div class="unfocusedRect" id="answerColorDiv" style="float:left; width:50px;height:50px; background-color:#FF0000"></div>
+	<div id="canvasHolder">
+	  <canvas id="colorCanvas" width="300" height="300" ></canvas><br>
+	</div>
+	<div id="showScoreDiv"></div>
+  </div>
+</div>
+<div style="float:left">
+	赤枠の真ん中の色を選べ<br>
+	<img id="targetImg" width="512px" height="320px"></img>
+	<div id="targetRect"  style="position:absolute; left: 0px; top: 0px; width:20px; height:20px; border-style: solid ; border-width: 6px; border-color:red;"></div>
+	</div>
+</div>
+</body>
+</html>
