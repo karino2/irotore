@@ -547,7 +547,7 @@ generateNextRandomScenario: function(){
 };
 
 function createRandomTargetPos(width, height){
-	return {X: Math.floor(Math.random()*width), Y: Math.floor(Math.random()*height) };
+	return {X: Math.floor(Math.random()*(width-1)), Y: Math.floor(Math.random()*(height-1)) };
 }
 
 var g_gameState = g_randomGameState;
