@@ -427,6 +427,10 @@ function OnMouseUp(pageX, pageY, canvObj) {
 	canvObj.hueChanging =false;
 }
 
+function resetAnswerColor() {
+	setDefaultAnswerColor();
+	selectSelectedColorDiv();
+}
 
 
 function setDefaultAnswerColor() {
@@ -500,18 +504,57 @@ var g_scenarios = [
  {url: "./3578501i.jpeg", width: 620, height: 457, targetX: 357, targetY: 421},
 ];
 
+// var g_randomBase = { url: "./test.png",  width: 512, height: 320 };
+var g_randomBase = { url: "./IMG_20150429_214321.jpg",  width: 600, height: 300 };
+
 var g_results = [];
 
-
-var g_gameState = {
+var g_normalGameState = {
 scenarioIndex: 0,
 showAnswer: false,
 answerSelected: false,
-hasNext: function() { return this.scenarioIndex+1 <g_scenarios.length },
+hasNext: function() { return this.scenarioIndex+1 <g_scenarios.length; },
+gotoNext: function() { 
+	this.showAnswer =false;
+	this.answerSelected =false;
+	this.scenarioIndex++; },
+getCurrentScenario: function(){ return g_scenarios[this.scenarioIndex]; },
 };
 
+var g_randomGameState = {
+scenarioIndex: 0,
+showAnswer: false,
+answerSelected: false,
+hasNext: function() { return this.scenarioIndex+1 <3 },
+current: undefined,
+gotoNext: function() { 
+	this.showAnswer =false;
+	this.answerSelected =false;
+	this.scenarioIndex++; 
+	this.current =this.generateNextRandomScenario();
+	},
+getCurrentScenario: function() {
+	if(!this.current) {
+		this.current =this.generateNextRandomScenario();
+	}
+	return this.current; },
+generateNextRandomScenario: function(){ 
+	var width = g_randomBase.width;
+	var height = g_randomBase.height;
+	var pos = createRandomTargetPos(width, height);
+	return {url: g_randomBase.url, width: width, height: height, targetX: pos.X, targetY: pos.Y };
+	},
+};
+
+function createRandomTargetPos(width, height){
+	return {X: Math.floor(Math.random()*width), Y: Math.floor(Math.random()*height) };
+}
+
+var g_gameState = g_randomGameState;
+// var g_gameState = g_normalGameState;
+
 function getCurrentScenario() {
-	return g_scenarios[g_gameState.scenarioIndex];
+	return g_gameState.getCurrentScenario();
 }
 
 function OnAnswerColorDivClicked() {
@@ -582,7 +625,7 @@ function distance(x1, y1, x2, y2) {
 	return Math.sqrt((x2-x1)*(x2-x1)+(y2-y1)*(y2-y1));
 }
 
-// 	var selectedResult = {rad: g_canvObj.currentRad, wheelX: g_canvObj.wheelX, wheelY: g_canvObj.wheelY, time: 0 };
+// 	var selectedResult = {rad: g_canvObj.currentRad, wheelX: g_canvObj.wheelX, wheelY: g_canvObj.wheelY, rgbs: selectedRGBs, time: 0 };
 function calcScore(selectedResult, answerResult) {
 	var radDiff = Math.abs(selectedResult.rad - answerResult.rad)*(g_canvObj.getGradW()*1.4/2 + 5); // almost R.
 	var gradDist = distance(selectedResult.wheelX, selectedResult.wheelY, answerResult.wheelX, answerResult.wheelY);
@@ -594,7 +637,13 @@ function calcScore(selectedResult, answerResult) {
 	}
 	var tmpDegree =tmpRes*180/Math.PI;
 	console.debug("radDiff=" +  tmpRd + ", degree=" + tmpDegree);
-	return {score: radDiff*100+gradDist, radDiff: radDiff, gradDist: gradDist, degreeDiff: tmpDegree};
+	
+	var colDiff = 0;
+	for(var i = 0; i < 3; i++) {
+		colDiff += Math.abs(selectedResult.rgbs[i] - answerResult.rgbs[i]);
+	}
+	
+	return {score: radDiff*100+gradDist, radDiff: radDiff, gradDist: gradDist, degreeDiff: tmpDegree, colorDiff: colDiff};
 }
 
 
@@ -606,7 +655,8 @@ function gotoShowAnswerState() {
 		$('#goButton').prop('disabled', true);
 	}
 
-	var selectedResult = {rad: g_canvObj.currentRad, wheelX: g_canvObj.wheelX, wheelY: g_canvObj.wheelY, time: 0 };
+	var selectedResult = {rad: g_canvObj.currentRad, wheelX: g_canvObj.wheelX, wheelY: g_canvObj.wheelY,
+		 rgbs: parseBGColor($('#selectedColorDiv').css('backgroundColor')), time: 0 };
 
 	g_gameState.showAnswer = true;
 	var img = document.getElementById('targetImg');
@@ -626,7 +676,7 @@ function gotoShowAnswerState() {
 		div.style.backgroundColor = 'rgb(' + answerRgbs[0] +',' + answerRgbs[1]+','+answerRgbs[2]+')';
 		OnAnswerColorDivClicked();
 	
-		var answerResult = {rad: g_canvObj.currentRad, wheelX: g_canvObj.wheelX, wheelY: g_canvObj.wheelY, time: 0 };
+		var answerResult = {rad: g_canvObj.currentRad, wheelX: g_canvObj.wheelX, wheelY: g_canvObj.wheelY, rgbs: answerRgbs, time: 0 };
 		var score = calcScore(selectedResult, answerResult);
 		// 	return {score: radDiff*100+gradDist, radDiff: radDiff, gradDist: gradDist};
 		/* showScore("Score is: " + score.score + "<br>radDiff: " + score.radDiff + "<br>gradDist=" + score.gradDist); */
@@ -637,7 +687,7 @@ function gotoShowAnswerState() {
 		}
 
 	
-		showScore("radDiff: " + score.radDiff + "<br>gradDist=" + score.gradDist + "<br>差分度数: " + score.degreeDiff);
+		showScore("radDiff: " + score.radDiff + "<br>gradDist=" + score.gradDist + "<br>差分度数: " + score.degreeDiff + "<br>色差分: " + score.colorDiff);
 	}, 200);
 }
 
@@ -653,6 +703,7 @@ function setupNewScenarioImage() {
 
 function outputResults() {
 	var buf = [];
+	var colDiffTotal = 0;
 	for(var i = 0; i < g_results.length; i++) {
 		// 	return {score: radDiff*100+gradDist, radDiff: radDiff, gradDist: gradDist};
 		var res =g_results[i];
@@ -665,8 +716,17 @@ function outputResults() {
 		buf.push("SV差分: ");
 		buf.push(res.gradDist);
 		buf.push("\n");
+		buf.push("色差分: ");
+		buf.push(res.colorDiff);
 		buf.push("\n");
+		buf.push("\n");
+		colDiffTotal += res.colorDiff;
 	}
+	
+	buf.push("色差分平均: ");
+	buf.push(colDiffTotal/g_results.length);
+		buf.push("\n");
+	
 			
 	$('#debugTextArea').val(buf.join(""));
 }
@@ -675,10 +735,8 @@ function goClicked() {
 	if(g_gameState.showAnswer) {
 		 if(g_gameState.hasNext()) {
 			$('#goButton').val("Go");
-			g_gameState.scenarioIndex++;
-			g_gameState.showAnswer =false;
-			g_gameState.answerSelected =false;
-			setDefaultAnswerColor();
+			g_gameState.gotoNext();
+			resetAnswerColor();
 			setupNewScenarioImage();
 		} else {
 			// $('#goButton').prop('disabled', true);
